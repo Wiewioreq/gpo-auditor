@@ -18,6 +18,7 @@ from .gpo import (
     check_gpo_sysvol_components, check_gpo_components_parallel,
     detect_orphaned_gpos, get_ou_links, get_wmi_filters,
     analyze_gpo_versions, compare_gpo,
+    check_sysvol_consistency, get_inheritance_info, get_user_computer_scope, parse_wmi_query,
 )
 from .parser_registry import parse_registry_pol
 from .parser_gpp import parse_gpp_preferences
@@ -28,6 +29,13 @@ from .notifications import send_email_notification, send_teams_notification
 from .dashboard import (
     calculate_risk_score, get_severity_distribution,
     get_category_distribution, get_gpo_health_summary,
+    get_compliance_score, get_top_risky_gpos, get_category_breakdown,
+    get_gpo_scope_summary, get_sysvol_size_summary, get_wmi_filter_summary,
+)
+from .security_filter import (
+    filter_by_severity, filter_by_category, filter_by_gpo, filter_by_cve,
+    group_by_severity, group_by_category, get_severity_rank, sort_by_severity,
+    get_unique_cves, summarize_findings,
 )
 
 __version__ = "3.1"
@@ -58,4 +66,12 @@ __all__ = [
     # dashboard
     "calculate_risk_score", "get_severity_distribution",
     "get_category_distribution", "get_gpo_health_summary",
+    "get_compliance_score", "get_top_risky_gpos", "get_category_breakdown",
+    "get_gpo_scope_summary", "get_sysvol_size_summary", "get_wmi_filter_summary",
+    # security_filter
+    "filter_by_severity", "filter_by_category", "filter_by_gpo", "filter_by_cve",
+    "group_by_severity", "group_by_category", "get_severity_rank", "sort_by_severity",
+    "get_unique_cves", "summarize_findings",
+    # gpo new functions
+    "check_sysvol_consistency", "get_inheritance_info", "get_user_computer_scope", "parse_wmi_query",
 ]

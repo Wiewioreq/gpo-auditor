@@ -53,7 +53,10 @@ def save_csv(data: List[Dict], path: str, fields: Optional[List[str]] = None) ->
 
 def save_excel(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[Dict],
                scripts: List[Dict], links: Dict, inconsistencies: List[Dict],
-               unused: List[Dict], security_findings: List[Dict], path: str) -> None:
+               unused: List[Dict], security_findings: List[Dict], path: str,
+               wmi_filters: Optional[Dict] = None, disabled: Optional[List[Dict]] = None,
+               blocked_inheritance: Optional[List[str]] = None,
+               changes: Optional[Dict] = None) -> None:
     """Save reports to styled Excel file with multiple sheets and charts."""
     log = get_logger()
     try:
@@ -142,6 +145,59 @@ def save_excel(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[Dict],
             # Unused GPOs
             if unused:
                 pd.DataFrame(unused).to_excel(writer, sheet_name='Unused GPOs', index=False)
+
+            # WMI Filters
+            if wmi_filters:
+                wmi_data = []
+                for wid, wf in wmi_filters.items():
+                    row = {'id': wid, 'name': wf.get('name', ''), 'query': wf.get('query', ''),
+                           'description': wf.get('description', '')}
+                    parsed = wf.get('parsed_query', {})
+                    row['wmi_class'] = parsed.get('class', '')
+                    row['wmi_namespace'] = parsed.get('namespace', '')
+                    row['wmi_conditions'] = '; '.join(parsed.get('conditions', []))
+                    wmi_data.append(row)
+                pd.DataFrame(wmi_data).to_excel(writer, sheet_name='WMI Filters', index=False)
+
+            # Disabled GPOs
+            if disabled:
+                pd.DataFrame(disabled).to_excel(writer, sheet_name='Disabled GPOs', index=False)
+
+            # Blocked Inheritance
+            if blocked_inheritance:
+                bi_data = [{'ou_dn': ou} for ou in blocked_inheritance]
+                pd.DataFrame(bi_data).to_excel(writer, sheet_name='Blocked Inheritance', index=False)
+
+            # Change Tracking
+            if changes:
+                change_rows = []
+                for gpo_info in changes.get('new_gpos', []):
+                    change_rows.append({'change_type': 'New', 'name': gpo_info.get('name', ''),
+                                        'guid': gpo_info.get('guid', ''), 'detail': ''})
+                for gpo_info in changes.get('deleted_gpos', []):
+                    change_rows.append({'change_type': 'Deleted', 'name': gpo_info.get('name', ''),
+                                        'guid': gpo_info.get('guid', ''), 'detail': ''})
+                for gpo_info in changes.get('modified_gpos', []):
+                    change_rows.append({
+                        'change_type': 'Modified', 'name': gpo_info.get('name', ''),
+                        'guid': gpo_info.get('guid', ''),
+                        'detail': f"v{gpo_info.get('old_version','')} -> v{gpo_info.get('new_version','')}",
+                    })
+                if change_rows:
+                    pd.DataFrame(change_rows).to_excel(writer, sheet_name='Change Tracking', index=False)
+
+            # Security Summary
+            sev_dist = {s: 0 for s in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO')}
+            cat_dist: Dict[str, int] = {}
+            for f in security_findings:
+                sev = f.get('severity', 'INFO')
+                sev_dist[sev] = sev_dist.get(sev, 0) + 1
+                cat = f.get('category', 'Unknown')
+                cat_dist[cat] = cat_dist.get(cat, 0) + 1
+            sec_summary_data = [{'type': 'Severity', 'label': k, 'count': v} for k, v in sev_dist.items()]
+            sec_summary_data += [{'type': 'Category', 'label': k, 'count': v}
+                                  for k, v in sorted(cat_dist.items(), key=lambda x: x[1], reverse=True)]
+            pd.DataFrame(sec_summary_data).to_excel(writer, sheet_name='Security Summary', index=False)
 
             # Apply styling
             if HAS_OPENPYXL_STYLES:
@@ -239,7 +295,10 @@ def save_html_report(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[D
                      scripts: List[Dict], inconsistencies: List[Dict], unused: List[Dict],
                      security_findings: List[Dict], changes: Optional[Dict],
                      blocked_inheritance: List[str], connection_mode: Optional[str],
-                     top_risky_gpos: List[Dict], path: str) -> None:
+                     top_risky_gpos: List[Dict], path: str,
+                     gpprefs_tab: bool = True,
+                     wmi_filters: Optional[Dict] = None,
+                     disabled: Optional[List[Dict]] = None) -> None:
     """Generate interactive HTML dashboard with charts, security findings, and timeline."""
     log = get_logger()
 
@@ -573,6 +632,15 @@ def save_html_report(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[D
                 <button class="tab" onclick="showTab(event, 'issues')">⚠️ Issues ({len(inconsistencies) + len(unused)})</button>
                 <button class="tab" onclick="showTab(event, 'registry')">🔧 Registry ({len(registry)})</button>
                 <button class="tab" onclick="showTab(event, 'scripts')">📜 Scripts ({len(scripts)})</button>
+                <button class="tab" onclick="showTab(event, 'gpp')">📎 GPP ({len(gpprefs)})</button>
+                <button class="tab" onclick="showTab(event, 'wmi')">🔒 WMI Filters ({len(wmi_filters) if wmi_filters else 0})</button>
+                <button class="tab" onclick="showTab(event, 'inheritance')">🏗️ Inheritance ({len(blocked_inheritance)})</button>
+                <button class="tab" onclick="showTab(event, 'disabled_tab')">⏸️ Disabled ({len(disabled) if disabled else 0})</button>"""
+
+    if changes:
+        html_content += """<button class="tab" onclick="showTab(event, 'changes_tab')">📊 Changes</button>"""
+
+    html_content += """
             </div>
             
             <div id="security" class="tab-content active">
@@ -729,7 +797,122 @@ def save_html_report(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[D
     if not scripts:
         html_content += '<tr><td colspan="4"><div class="empty-state"><div class="icon">📭</div>No scripts found</div></td></tr>'
 
-    html_content += f"""</table></div></div></div>
+    # --- GPP tab ---
+    html_content += """</table></div></div></div>
+
+            <div id="gpp" class="tab-content">
+                <div class="section">
+                    <h2 class="section-title">📎 GPP Preferences</h2>
+                    <div class="search-box">
+                        <input type="text" id="gppSearch" placeholder="🔍 Search GPP preferences..." onkeyup="filterTable('gppTable', this)">
+                    </div>
+                    <div class="table-wrapper">
+                        <table id="gppTable">
+                            <tr><th>File</th><th>Element</th><th>Action</th><th>Attributes</th><th>cPassword?</th></tr>"""
+
+    if gpprefs_tab and gpprefs:
+        for p in gpprefs[:500]:
+            cpass_badge = '<span class="badge badge-critical">YES ⚠️</span>' if p.get('has_cpassword') else '<span class="badge badge-success">No</span>'
+            html_content += f'''<tr>
+                <td>{h(p.get("file", ""))}</td>
+                <td><strong>{h(p.get("element", ""))}</strong></td>
+                <td>{h(p.get("action", ""))}</td>
+                <td><code>{h(str(p.get("attributes", ""))[:80])}</code></td>
+                <td>{cpass_badge}</td>
+            </tr>'''
+        if len(gpprefs) > 500:
+            html_content += f'<tr><td colspan="5" style="text-align:center;padding:20px;color:#666;">Showing 500 of {len(gpprefs)} entries</td></tr>'
+    else:
+        html_content += '<tr><td colspan="5"><div class="empty-state"><div class="icon">📭</div>No GPP preferences found</div></td></tr>'
+
+    # --- WMI Filters tab ---
+    wmi_count = len(wmi_filters) if wmi_filters else 0
+    html_content += """</table></div></div></div>
+
+            <div id="wmi" class="tab-content">
+                <div class="section">
+                    <h2 class="section-title">🔒 WMI Filters</h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <tr><th>Name</th><th>WMI Class</th><th>Namespace</th><th>Conditions</th><th>Raw Query</th></tr>"""
+
+    if wmi_filters:
+        for wid, wf in wmi_filters.items():
+            parsed = wf.get('parsed_query', {})
+            conds = '; '.join(parsed.get('conditions', []))
+            html_content += f'''<tr>
+                <td><strong>{h(wf.get("name", wid))}</strong></td>
+                <td><code>{h(parsed.get("class", ""))}</code></td>
+                <td>{h(parsed.get("namespace", ""))}</td>
+                <td>{h(conds[:100])}</td>
+                <td><code>{h(wf.get("query", "")[:80])}</code></td>
+            </tr>'''
+    else:
+        html_content += '<tr><td colspan="5"><div class="empty-state"><div class="icon">✅</div>No WMI filters found</div></td></tr>'
+
+    # --- Inheritance tab ---
+    html_content += """</table></div></div></div>
+
+            <div id="inheritance" class="tab-content">
+                <div class="section">
+                    <h2 class="section-title">🏗️ Blocked Inheritance OUs</h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <tr><th>OU Distinguished Name</th></tr>"""
+
+    if blocked_inheritance:
+        for ou in blocked_inheritance:
+            html_content += f'<tr><td><code>{h(ou)}</code></td></tr>'
+    else:
+        html_content += '<tr><td><div class="empty-state"><div class="icon">✅</div>No blocked inheritance found</div></td></tr>'
+
+    html_content += """</table></div></div></div>
+
+            <div id="disabled_tab" class="tab-content">
+                <div class="section">
+                    <h2 class="section-title">⏸️ Disabled GPOs</h2>
+                    <div class="table-wrapper">
+                        <table>
+                            <tr><th>GPO Name</th><th>GUID</th><th>User Enabled</th><th>Computer Enabled</th></tr>"""
+
+    if disabled:
+        for g in disabled:
+            u_badge = '<span class="badge badge-success">Yes</span>' if g.get('user_enabled', True) else '<span class="badge badge-critical">No</span>'
+            c_badge = '<span class="badge badge-success">Yes</span>' if g.get('computer_enabled', True) else '<span class="badge badge-critical">No</span>'
+            html_content += f'<tr><td><strong>{h(g.get("name",""))}</strong></td><td><code>{h(g.get("guid","")[:20])}</code></td><td>{u_badge}</td><td>{c_badge}</td></tr>'
+    else:
+        html_content += '<tr><td colspan="4"><div class="empty-state"><div class="icon">✅</div>No disabled GPOs</div></td></tr>'
+
+    # --- Changes tab (only if changes data is present) ---
+    if changes:
+        new_count = len(changes.get('new_gpos', []))
+        deleted_count = len(changes.get('deleted_gpos', []))
+        modified_count = len(changes.get('modified_gpos', []))
+        html_content += f"""</table></div></div></div>
+
+            <div id="changes_tab" class="tab-content">
+                <div class="section">
+                    <h2 class="section-title">📊 Change Tracking</h2>
+                    <div class="changes-grid">
+                        <div class="change-box new"><span class="change-number">{new_count}</span><span class="change-label">New GPOs</span></div>
+                        <div class="change-box deleted"><span class="change-number">{deleted_count}</span><span class="change-label">Deleted GPOs</span></div>
+                        <div class="change-box modified"><span class="change-number">{modified_count}</span><span class="change-label">Modified GPOs</span></div>
+                    </div>
+                    <div class="table-wrapper" style="margin-top:20px;">
+                        <table>
+                            <tr><th>Change Type</th><th>GPO Name</th><th>Detail</th></tr>"""
+        for g in changes.get('new_gpos', []):
+            html_content += f'<tr><td><span class="badge badge-success">New</span></td><td><strong>{h(g.get("name",""))}</strong></td><td></td></tr>'
+        for g in changes.get('deleted_gpos', []):
+            html_content += f'<tr><td><span class="badge badge-critical">Deleted</span></td><td><strong>{h(g.get("name",""))}</strong></td><td></td></tr>'
+        for g in changes.get('modified_gpos', []):
+            detail = f"v{g.get('old_version','')} → v{g.get('new_version','')}"
+            html_content += f'<tr><td><span class="badge badge-warning">Modified</span></td><td><strong>{h(g.get("name",""))}</strong></td><td>{h(detail)}</td></tr>'
+        html_content += "</table></div></div></div>"
+    else:
+        html_content += "</table></div></div></div>"
+
+    html_content += f"""
         </div>
         
         <footer>

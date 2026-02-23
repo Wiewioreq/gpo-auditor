@@ -342,6 +342,11 @@ def get_wmi_filters(config: dict, ad_conn: Optional[ADConnection] = None) -> Dic
             except Exception as e:
                 log.debug(f"Error parsing WMI filter: {e}")
 
+        for wid, wf in wmi_filters.items():
+            raw_query = wf.get('query', '')
+            if raw_query:
+                wf['parsed_query'] = parse_wmi_query(raw_query)
+
         return wmi_filters
 
     except Exception as e:
@@ -421,3 +426,199 @@ def compare_gpo(gpo1: Dict, gpo2: Dict, sysvol_path: str) -> Dict:
                 log.error(f"Error comparing {scope} registry: {e}")
 
     return comparison
+
+
+# ---------------------------------------------------------------------------
+# New helper functions
+# ---------------------------------------------------------------------------
+
+def parse_wmi_query(wmi_query: str) -> Dict:
+    """Parse a WMI filter query string and extract key information."""
+    result = {'namespace': '', 'class': '', 'conditions': []}
+
+    if not wmi_query:
+        return result
+
+    # WMI Parm2 format: "1;3;10;12;WQL;root\CIMv2;SELECT * FROM Win32_OperatingSystem WHERE …"
+    # Try to extract namespace and query parts
+    parts = wmi_query.split(';')
+    raw = wmi_query
+
+    for part in parts:
+        part_stripped = part.strip()
+        if part_stripped.upper().startswith('SELECT'):
+            raw = part_stripped
+        elif '\\' in part_stripped and not part_stripped.startswith('SELECT'):
+            result['namespace'] = part_stripped
+
+    # Parse SELECT … FROM <class> [WHERE …]
+    m = re.match(
+        r'SELECT\s+.+?\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?',
+        raw, re.IGNORECASE | re.DOTALL
+    )
+    if m:
+        result['class'] = m.group(1)
+        conditions_raw = m.group(2) or ''
+        if conditions_raw:
+            # Split on AND/OR
+            conds = re.split(r'\s+(?:AND|OR)\s+', conditions_raw, flags=re.IGNORECASE)
+            result['conditions'] = [c.strip() for c in conds if c.strip()]
+
+    return result
+
+
+def check_sysvol_consistency(gpo_list: List[Dict], sysvol_path: str) -> Dict:
+    """Check SYSVOL vs AD consistency and return a detailed report."""
+    log = get_logger()
+
+    report = {
+        'missing_sysvol_folders': [],
+        'missing_gpt_ini': [],
+        'version_mismatches': [],
+        'empty_gpos': [],
+        'orphaned_sysvol_folders': [],
+        'missing_machine_folder': [],
+        'missing_user_folder': [],
+    }
+
+    ad_guids = {}
+    for gpo in gpo_list:
+        ad_guids[gpo['guid'].upper()] = gpo
+
+    sysvol_dir = Path(sysvol_path)
+
+    # Check AD GPOs in SYSVOL
+    for gpo in gpo_list:
+        guid = gpo['guid']
+        gpo_path = sysvol_dir / f"{{{guid}}}"
+
+        if not gpo_path.exists():
+            report['missing_sysvol_folders'].append({'name': gpo['name'], 'guid': guid})
+            continue
+
+        gpt_ini = gpo_path / 'GPT.INI'
+        if not gpt_ini.exists():
+            report['missing_gpt_ini'].append({'name': gpo['name'], 'guid': guid})
+        else:
+            # Parse version from GPT.INI
+            try:
+                cp = __import__('configparser').RawConfigParser()
+                cp.read(str(gpt_ini), encoding='utf-8')
+                ver_str = cp.get('General', 'Version', fallback='0')
+                sysvol_version = int(ver_str)
+                ad_version = gpo.get('version', 0)
+                if sysvol_version != ad_version:
+                    report['version_mismatches'].append({
+                        'name': gpo['name'], 'guid': guid,
+                        'ad_version': ad_version, 'sysvol_version': sysvol_version,
+                    })
+            except Exception:
+                pass
+
+        machine_dir = gpo_path / 'Machine'
+        user_dir    = gpo_path / 'User'
+        if not machine_dir.exists():
+            report['missing_machine_folder'].append({'name': gpo['name'], 'guid': guid})
+        if not user_dir.exists():
+            report['missing_user_folder'].append({'name': gpo['name'], 'guid': guid})
+
+        # Check if effectively empty (no Registry.pol, no Preferences, no Scripts)
+        has_content = (
+            (machine_dir / 'Registry.pol').exists()
+            or (user_dir / 'Registry.pol').exists()
+            or any((machine_dir / 'Preferences').rglob('*.xml') if (machine_dir / 'Preferences').exists() else [])
+            or any((user_dir / 'Preferences').rglob('*.xml') if (user_dir / 'Preferences').exists() else [])
+        )
+        if not has_content:
+            report['empty_gpos'].append({'name': gpo['name'], 'guid': guid})
+
+    # Orphaned SYSVOL folders
+    try:
+        if sysvol_dir.exists():
+            for folder in sysvol_dir.iterdir():
+                if folder.is_dir() and folder.name.startswith('{') and folder.name.endswith('}'):
+                    guid = folder.name[1:-1].upper()
+                    if guid not in ad_guids:
+                        report['orphaned_sysvol_folders'].append(folder.name)
+    except PermissionError:
+        log.warning("Cannot read SYSVOL for orphan detection")
+
+    log.info(f"SYSVOL consistency: {len(report['missing_sysvol_folders'])} missing, "
+             f"{len(report['version_mismatches'])} version mismatches, "
+             f"{len(report['orphaned_sysvol_folders'])} orphaned folders")
+    return report
+
+
+def get_inheritance_info(gpo_list: List[Dict], ou_to_gpo: Dict, blocked_inheritance: List[str]) -> Dict:
+    """Build inheritance info: enforced GPOs, blocked OUs, disabled GPOs."""
+    enforced = []
+    disabled_all = []
+    disabled_user = []
+    disabled_computer = []
+
+    # Collect enforced link GUIDs
+    enforced_guids = set()
+    for ou_dn, links in ou_to_gpo.items():
+        for link in links:
+            if isinstance(link, dict) and link.get('enforced'):
+                enforced_guids.add(link['guid'].upper())
+
+    guid_to_gpo = {g['guid'].upper(): g for g in gpo_list}
+
+    for guid in enforced_guids:
+        gpo = guid_to_gpo.get(guid)
+        if gpo:
+            enforced.append({'name': gpo['name'], 'guid': guid})
+
+    for gpo in gpo_list:
+        user_en = gpo.get('user_enabled', True)
+        comp_en = gpo.get('computer_enabled', True)
+        if not user_en and not comp_en:
+            disabled_all.append({'name': gpo['name'], 'guid': gpo['guid']})
+        elif not user_en:
+            disabled_user.append({'name': gpo['name'], 'guid': gpo['guid']})
+        elif not comp_en:
+            disabled_computer.append({'name': gpo['name'], 'guid': gpo['guid']})
+
+    return {
+        'enforced': enforced,
+        'blocked_ous': list(blocked_inheritance),
+        'disabled_all': disabled_all,
+        'disabled_user': disabled_user,
+        'disabled_computer': disabled_computer,
+    }
+
+
+def get_user_computer_scope(gpo_list: List[Dict], sysvol_path: str) -> List[Dict]:
+    """Detect which scope (User/Computer) each GPO applies to and enrich the GPO dicts."""
+    sysvol_dir = Path(sysvol_path)
+
+    for gpo in gpo_list:
+        guid = gpo['guid']
+        gpo_path = sysvol_dir / f"{{{guid}}}"
+
+        machine_has_content = False
+        user_has_content = False
+
+        if gpo_path.exists():
+            machine_dir = gpo_path / 'Machine'
+            user_dir    = gpo_path / 'User'
+
+            if machine_dir.exists():
+                machine_has_content = (
+                    (machine_dir / 'Registry.pol').exists()
+                    or (machine_dir / 'Preferences').exists()
+                    or (machine_dir / 'Scripts').exists()
+                )
+
+            if user_dir.exists():
+                user_has_content = (
+                    (user_dir / 'Registry.pol').exists()
+                    or (user_dir / 'Preferences').exists()
+                    or (user_dir / 'Scripts').exists()
+                )
+
+        gpo['applies_to_computer'] = machine_has_content and gpo.get('computer_enabled', True)
+        gpo['applies_to_user']     = user_has_content    and gpo.get('user_enabled',    True)
+
+    return gpo_list

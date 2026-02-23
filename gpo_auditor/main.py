@@ -15,7 +15,8 @@ from .ad import ARGS_REQUIRE_LDAPS as _ARGS_REQUIRE_LDAPS
 import gpo_auditor.ad as _ad_module
 from .gpo import (get_gpo_list, get_ou_links, get_wmi_filters,
                   check_gpo_components_parallel, detect_orphaned_gpos,
-                  analyze_gpo_versions, compare_gpo)
+                  analyze_gpo_versions, compare_gpo,
+                  check_sysvol_consistency, get_inheritance_info, get_user_computer_scope)
 from .parser_registry import parse_registry_pol
 from .parser_gpp import parse_gpp_preferences
 from .parser_scripts import parse_scripts
@@ -23,6 +24,8 @@ from .security import SecurityAnalyzer
 from .reports import save_json, save_csv, save_excel, save_html_report
 from .change_tracking import load_previous_scan, save_scan_cache, load_scan_cache, compare_scans
 from .notifications import send_email_notification, send_teams_notification
+from .security_filter import summarize_findings, sort_by_severity
+from .dashboard import get_compliance_score, get_top_risky_gpos as get_top_risky
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -322,6 +325,13 @@ def main():
                      Colors.WARNING if unused else Colors.GREEN))
         print(colored(f"  {icon('⏸️', '[-]')} Disabled GPOs: {len(disabled)}", Colors.CYAN))
 
+        # Enrich GPOs with scope info and inheritance
+        get_user_computer_scope(gpo_list, sysvol_path)
+        inheritance_info = get_inheritance_info(gpo_list, ou_to_gpo, blocked_inheritance)
+        compliance = get_compliance_score(security_findings, gpo_list)
+        if not args.quiet:
+            print(colored(f"  {icon('📊', '[SCORE]')} Compliance Score: {compliance:.1f}/100", Colors.CYAN))
+
         # Step 8: Change tracking
         changes = None
         if args.track_changes:
@@ -377,14 +387,17 @@ def main():
         if options.get('generate_excel', True):
             save_excel(gpo_list, registry_entries, gpprefs, scripts, gpo_to_ou,
                       inconsistencies, unused, security_findings,
-                      os.path.join(output_dir, f'gpo_audit_{timestamp}.xlsx'))
+                      os.path.join(output_dir, f'gpo_audit_{timestamp}.xlsx'),
+                      wmi_filters=wmi_filters, disabled=disabled,
+                      blocked_inheritance=blocked_inheritance, changes=changes)
 
         html_path = None
         if options.get('generate_html', True):
             html_path = os.path.join(output_dir, f'gpo_report_{timestamp}.html')
             save_html_report(gpo_list, registry_entries, gpprefs, scripts,
                            inconsistencies, unused, security_findings, changes,
-                           blocked_inheritance, connection_mode, top_risky_gpos, html_path)
+                           blocked_inheritance, connection_mode, top_risky_gpos, html_path,
+                           wmi_filters=wmi_filters, disabled=disabled)
 
         # Save cache for next run
         if not args.use_cache:
