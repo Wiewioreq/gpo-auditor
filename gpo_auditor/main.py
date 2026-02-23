@@ -149,9 +149,6 @@ def main():
         if not args.quiet:
             print_banner()
 
-        # Load configuration
-        print(colored(f"\n{icon('📋', '[CFG]')} Loading Configuration...", Colors.BOLD))
-
         # Resolve password from ENV or prompt if needed
         config['ad']['_resolved_password'] = get_password_from_env_or_prompt(config)
 
