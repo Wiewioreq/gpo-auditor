@@ -88,9 +88,17 @@ def _parse_registry_pol_binary(pol_path: str, scope: str) -> List[Dict]:
                 if reg_type in (1, 2):  # REG_SZ, REG_EXPAND_SZ
                     decoded = raw_data.decode('utf-16-le', errors='replace').rstrip('\x00')
                 elif reg_type == 4:  # REG_DWORD
-                    decoded = str(struct.unpack_from('<I', raw_data)[0]) if len(raw_data) >= 4 else str(raw_data.hex())
+                    if len(raw_data) >= 4:
+                        decoded = str(struct.unpack_from('<I', raw_data)[0])
+                    else:
+                        log.warning(f"Unexpected DWORD size {len(raw_data)} in {pol_path}")
+                        decoded = raw_data.hex()
                 elif reg_type == 11:  # REG_QWORD
-                    decoded = str(struct.unpack_from('<Q', raw_data)[0]) if len(raw_data) >= 8 else str(raw_data.hex())
+                    if len(raw_data) >= 8:
+                        decoded = str(struct.unpack_from('<Q', raw_data)[0])
+                    else:
+                        log.warning(f"Unexpected QWORD size {len(raw_data)} in {pol_path}")
+                        decoded = raw_data.hex()
                 elif reg_type == 7:  # REG_MULTI_SZ
                     decoded = raw_data.decode('utf-16-le', errors='replace').replace('\x00', '\n').strip()
                 else:

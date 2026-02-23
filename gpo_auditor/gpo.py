@@ -1,5 +1,6 @@
 """GPO-related functions: listing, SYSVOL analysis, OU links, WMI filters, versioning."""
 
+import configparser as _configparser
 import os
 import re
 import sys
@@ -502,7 +503,7 @@ def check_sysvol_consistency(gpo_list: List[Dict], sysvol_path: str) -> Dict:
         else:
             # Parse version from GPT.INI
             try:
-                cp = __import__('configparser').RawConfigParser()
+                cp = _configparser.RawConfigParser()
                 cp.read(str(gpt_ini), encoding='utf-8')
                 ver_str = cp.get('General', 'Version', fallback='0')
                 sysvol_version = int(ver_str)
@@ -523,11 +524,18 @@ def check_sysvol_consistency(gpo_list: List[Dict], sysvol_path: str) -> Dict:
             report['missing_user_folder'].append({'name': gpo['name'], 'guid': guid})
 
         # Check if effectively empty (no Registry.pol, no Preferences, no Scripts)
+        def _has_xml(pref_dir: Path) -> bool:
+            try:
+                next(pref_dir.rglob('*.xml'))
+                return True
+            except StopIteration:
+                return False
+
         has_content = (
             (machine_dir / 'Registry.pol').exists()
             or (user_dir / 'Registry.pol').exists()
-            or any((machine_dir / 'Preferences').rglob('*.xml') if (machine_dir / 'Preferences').exists() else [])
-            or any((user_dir / 'Preferences').rglob('*.xml') if (user_dir / 'Preferences').exists() else [])
+            or ((machine_dir / 'Preferences').exists() and _has_xml(machine_dir / 'Preferences'))
+            or ((user_dir / 'Preferences').exists() and _has_xml(user_dir / 'Preferences'))
         )
         if not has_content:
             report['empty_gpos'].append({'name': gpo['name'], 'guid': guid})
