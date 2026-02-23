@@ -57,7 +57,9 @@ def group_by_severity(findings: List[Dict]) -> Dict[str, List[Dict]]:
     result: Dict[str, List[Dict]] = {s: [] for s in _SEVERITY_RANK}
     for f in findings:
         sev = f.get('severity', 'INFO').upper()
-        result.setdefault(sev, []).append(f)
+        if sev not in result:
+            result[sev] = []
+        result[sev].append(f)
     return result
 
 

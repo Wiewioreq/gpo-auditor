@@ -17,7 +17,7 @@ _SENSITIVE_PATTERNS = [
     re.compile(r'net\s+use\s+.*\s+/user:', re.IGNORECASE),
     re.compile(r'runas\s+/password', re.IGNORECASE),
     re.compile(r'ConvertTo-SecureString', re.IGNORECASE),
-    re.compile(r'[A-Za-z0-9+/]{20,}={0,2}'),  # base64-like strings
+    re.compile(r'[A-Za-z0-9+/]{40,}={0,2}(?=\s|$|["\'])'),  # base64-like strings (min 40 chars, word-bounded)
 ]
 
 _SCRIPT_SECTIONS = ['Startup', 'Shutdown', 'Logon', 'Logoff']
@@ -141,7 +141,7 @@ def parse_scripts(scripts_dict: Dict[str, List[str]]) -> List[Dict]:
         # scripts.ini would be at:  /sysvol/{guid}/Machine/Scripts/scripts.ini
         ini_searched = set()
         for fpath in files:
-            ini_dir = str(Path(fpath).parent.parent)  # go up one level from Startup/Logon/...
+            ini_dir = str(Path(fpath).parent.parent)  # go up two levels: from Startup/Logon/... to Scripts/
             ini_path = os.path.join(ini_dir, 'scripts.ini')
             if ini_path not in ini_searched and os.path.exists(ini_path):
                 ini_searched.add(ini_path)

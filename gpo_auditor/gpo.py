@@ -453,6 +453,8 @@ def parse_wmi_query(wmi_query: str) -> Dict:
             result['namespace'] = part_stripped
 
     # Parse SELECT … FROM <class> [WHERE …]
+    # Note: supports simple flat WMI SELECT queries only; nested sub-selects,
+    # computed columns, or complex expressions may not be parsed correctly.
     m = re.match(
         r'SELECT\s+.+?\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+))?',
         raw, re.IGNORECASE | re.DOTALL

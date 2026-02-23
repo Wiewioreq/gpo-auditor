@@ -387,6 +387,10 @@ def save_html_report(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[D
             """
         top_risky_html += "</table></div></div>"
 
+    wmi_count = len(wmi_filters) if isinstance(wmi_filters, dict) else 0
+    disabled_count = len(disabled) if disabled is not None else 0
+    blocked_count = len(blocked_inheritance) if blocked_inheritance else 0
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -633,9 +637,9 @@ def save_html_report(gpo_list: List[Dict], registry: List[Dict], gpprefs: List[D
                 <button class="tab" onclick="showTab(event, 'registry')">🔧 Registry ({len(registry)})</button>
                 <button class="tab" onclick="showTab(event, 'scripts')">📜 Scripts ({len(scripts)})</button>
                 <button class="tab" onclick="showTab(event, 'gpp')">📎 GPP ({len(gpprefs)})</button>
-                <button class="tab" onclick="showTab(event, 'wmi')">🔒 WMI Filters ({len(wmi_filters) if isinstance(wmi_filters, dict) else 0})</button>
-                <button class="tab" onclick="showTab(event, 'inheritance')">🏗️ Inheritance ({len(blocked_inheritance) if blocked_inheritance else 0})</button>
-                <button class="tab" onclick="showTab(event, 'disabled_tab')">⏸️ Disabled ({len(disabled) if disabled is not None else 0})</button>"""
+                <button class="tab" onclick="showTab(event, 'wmi')">🔒 WMI Filters ({wmi_count})</button>
+                <button class="tab" onclick="showTab(event, 'inheritance')">🏗️ Inheritance ({blocked_count})</button>
+                <button class="tab" onclick="showTab(event, 'disabled_tab')">⏸️ Disabled ({disabled_count})</button>"""
 
     if changes:
         html_content += """<button class="tab" onclick="showTab(event, 'changes_tab')">📊 Changes</button>"""

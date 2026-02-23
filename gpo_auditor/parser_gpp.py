@@ -8,10 +8,10 @@ from typing import Dict, List
 from .logging_setup import get_logger
 
 try:
-    from lxml import etree as _lxml_etree
+    from lxml import etree as _etree
     HAS_LXML = True
 except ImportError:
-    _lxml_etree = None
+    _etree = None
     HAS_LXML = False
 
 import xml.etree.ElementTree as _stdlib_etree
@@ -37,7 +37,7 @@ def _detect_cpassword(xml_path: str) -> bool:
 def _parse_with_lxml(xml_path: str, log) -> List[Dict]:
     """Parse GPP XML using lxml."""
     prefs = []
-    tree = _lxml_etree.parse(xml_path)
+    tree = _etree.parse(xml_path)
     root_el = tree.getroot()
 
     has_cpassword = _detect_cpassword(xml_path)

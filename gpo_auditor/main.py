@@ -25,7 +25,7 @@ from .reports import save_json, save_csv, save_excel, save_html_report
 from .change_tracking import load_previous_scan, save_scan_cache, load_scan_cache, compare_scans
 from .notifications import send_email_notification, send_teams_notification
 from .security_filter import summarize_findings, sort_by_severity
-from .dashboard import get_compliance_score, get_top_risky_gpos as get_top_risky
+from .dashboard import get_compliance_score, get_top_risky_gpos
 
 
 def parse_arguments() -> argparse.Namespace:

@@ -2,20 +2,22 @@
 
 from typing import Dict, List
 
+# Severity weight constants shared across all dashboard calculations
+SEVERITY_WEIGHTS: Dict[str, int] = {
+    'CRITICAL': 10,
+    'HIGH': 5,
+    'MEDIUM': 3,
+    'LOW': 1,
+    'INFO': 0,
+}
+
 
 def calculate_risk_score(security_findings: List[Dict]) -> int:
     """Calculate overall risk score from security findings."""
-    severity_scores = {
-        'CRITICAL': 10,
-        'HIGH': 5,
-        'MEDIUM': 3,
-        'LOW': 1,
-        'INFO': 0
-    }
     score = 0
     for finding in security_findings:
         severity = finding.get('severity', 'INFO')
-        score += severity_scores.get(severity, 0)
+        score += SEVERITY_WEIGHTS.get(severity, 0)
     return score
 
 
@@ -70,16 +72,14 @@ def get_compliance_score(security_findings: List[Dict], gpo_list: List[Dict]) ->
         return 100.0
 
     risk = calculate_risk_score(security_findings)
-    # Max possible: every GPO contributes one CRITICAL (score 10)
-    max_risk = max(len(gpo_list) * 10, 1)
+    # Max possible: every GPO contributes one CRITICAL finding
+    max_risk = max(len(gpo_list) * SEVERITY_WEIGHTS['CRITICAL'], 1)
     score = max(0.0, 100.0 - (risk / max_risk) * 100.0)
     return round(score, 1)
 
 
 def get_top_risky_gpos(gpo_list: List[Dict], security_findings: List[Dict], top_n: int = 10) -> List[Dict]:
     """Return top-N GPOs ranked by their aggregated risk score."""
-    severity_scores = {'CRITICAL': 10, 'HIGH': 5, 'MEDIUM': 3, 'LOW': 1, 'INFO': 0}
-
     gpo_scores: Dict[str, Dict] = {}
     for gpo in gpo_list:
         name = gpo.get('name', '')
@@ -90,7 +90,7 @@ def get_top_risky_gpos(gpo_list: List[Dict], security_findings: List[Dict], top_
         if name not in gpo_scores:
             gpo_scores[name] = {'name': name, 'guid': '', 'score': 0, 'findings': 0}
         sev = f.get('severity', 'INFO')
-        gpo_scores[name]['score'] += severity_scores.get(sev, 0)
+        gpo_scores[name]['score'] += SEVERITY_WEIGHTS.get(sev, 0)
         gpo_scores[name]['findings'] += 1
 
     ranked = sorted(gpo_scores.values(), key=lambda x: x['score'], reverse=True)
