@@ -1,0 +1,6 @@
+ldap3
+pandas
+pyyaml
+lxml
+openpyxl
+requests
